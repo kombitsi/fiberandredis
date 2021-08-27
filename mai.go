@@ -1,31 +1,64 @@
 package main
 
 import (
+	"errors"
+	"github.com/gomodule/redigo/redis"
 	"log"
 	"time"
-	"github.com/gomodule/redigo/redis"
 	"github.com/gofiber/fiber/v2"
-	"github.com/kombitsi/fiberandredis/handler"
-
 )
 
-func setRoutes(app *fiber.App)  {
-	app.Get("/json/hackers", GetHacker)
-
-	app.Get("/json/hackers:key", DelHacker)
-
-	app.Get("/json/albums:id", GetAlbums)
-
-	app.Get("/json/hackers:id", DelAlbums)
-
-
-
+type Hacker struct {
+	Name string `redis:"name"`
+	Score int `redis:"score"`
 }
+
+var pool *redis.Pool
+
+var ErrNoAlbum = errors.New("no album found")
+
+func init ()  {
+	pool = &redis.Pool{
+		MaxIdle:     10,
+		IdleTimeout: 240 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			return redis.Dial("tcp", "localhost:6379")
+		},
+	}
+	
+}
+
 
 func main() {
+	// Fiber instance
 	app := fiber.New()
 
+	// Routes
+	app.Get("/json/:hackers", GetHacker)
 
-	app.Listen(8010)
+
+	// 404 Handler
+	app.Use(func(c *fiber.Ctx) error {
+		return c.SendStatus(404) // => 404 "Not Found"
+	})
+
+	// Start server
+	log.Fatal(app.Listen(":8010"))
 }
 
+// Handler
+func GetHacker(key string) (error, *Hacker) {
+	conn := pool.Get()
+	defer conn.Close()
+	values, err := redis.Values(conn.Do("ZRANGE", "key"))
+	if err != nil {
+		return err, nil
+
+	}
+	var hacker Hacker
+	err = redis.ScanStruct(values, &hacker)
+	if err != nil {
+		return err, nil
+	}
+	return nil, &hacker
+}
